@@ -1,5 +1,5 @@
 // Command ff stages everything, writes the commit message with a local model, and
-// commits. See SPEC.md — the spec is the contract, this file is just the sequence.
+// commits. This file is just the sequence; each step's rationale lives with its code.
 package main
 
 import (
@@ -23,18 +23,13 @@ func fail(err error) {
 }
 
 func main() {
-	dryRun, edit := false, false
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "--dry-run":
-			dryRun = true
-		case "--edit":
-			edit = true
 		case "--version":
 			fmt.Println("ff", version)
 			return
 		default:
-			fail(fmt.Errorf("unknown argument %q (usage: ff [--dry-run|--edit|--version])", arg))
+			fail(fmt.Errorf("unknown argument %q (usage: ff [--version])", arg))
 		}
 	}
 
@@ -75,17 +70,9 @@ func main() {
 	}
 
 	fmt.Println(msg)
-	if dryRun {
-		return
-	}
 	// A plain git commit: hooks run, as they would for a hand-written message.
-	// --edit opens the editor seeded with the generated message.
-	args := []string{"commit", "-m", msg}
-	if edit {
-		args = append(args, "--edit")
-	}
-	commit := exec.Command("git", args...)
-	commit.Stdin, commit.Stdout, commit.Stderr = os.Stdin, os.Stdout, os.Stderr
+	commit := exec.Command("git", "commit", "-m", msg)
+	commit.Stdout, commit.Stderr = os.Stdout, os.Stderr
 	if err := commit.Run(); err != nil {
 		fail(fmt.Errorf("git commit failed"))
 	}

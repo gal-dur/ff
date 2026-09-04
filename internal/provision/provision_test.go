@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/gal-dur/ff/internal/pin"
 )
 
 // A stand-in runtime archive: the pinned layout with a fake binary in it.
@@ -62,7 +64,7 @@ func servePinned(t *testing.T, content []byte) *int {
 
 	sum := sha256.Sum256(content)
 	saved := runtimeArchive
-	runtimeArchive = artifact{url: server.URL, sha256: hex.EncodeToString(sum[:]), name: saved.name}
+	runtimeArchive = pin.Artifact{URL: server.URL, SHA256: hex.EncodeToString(sum[:]), Name: saved.Name}
 	t.Cleanup(func() { runtimeArchive = saved })
 	return &hits
 }
@@ -100,13 +102,13 @@ func TestACorruptDownloadIsRefusedWholesale(t *testing.T) {
 	content := fakeArchive(t)
 	servePinned(t, content)
 	// Pin a hash the served bytes cannot match.
-	runtimeArchive.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+	runtimeArchive.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 
 	cache := t.TempDir()
 	if _, err := Runtime(cache); err == nil {
 		t.Fatal("a checksum mismatch was accepted")
 	}
-	if _, err := os.Stat(filepath.Join(cache, runtimeArchive.name)); err == nil {
+	if _, err := os.Stat(filepath.Join(cache, runtimeArchive.Name)); err == nil {
 		t.Fatal("a corrupt artifact was left in place under its final name")
 	}
 }
@@ -137,7 +139,7 @@ func TestABundledRuntimeIsVerifiedBeforeExtraction(t *testing.T) {
 	sum := sha256.Sum256(blob)
 
 	saved := runtimeArchive
-	runtimeArchive.sha256 = hex.EncodeToString(sum[:])
+	runtimeArchive.SHA256 = hex.EncodeToString(sum[:])
 	t.Cleanup(func() { runtimeArchive = saved })
 
 	cache := t.TempDir()
@@ -149,7 +151,7 @@ func TestABundledRuntimeIsVerifiedBeforeExtraction(t *testing.T) {
 		t.Fatalf("extracted binary bad: %v", err)
 	}
 
-	runtimeArchive.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+	runtimeArchive.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 	if _, err := runtimeFromBlob(t.TempDir(), blob); err == nil {
 		t.Fatal("a mismatched bundled runtime was extracted")
 	}

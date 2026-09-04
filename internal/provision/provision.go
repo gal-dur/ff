@@ -30,24 +30,12 @@ import (
 // the tests can point them at a served fake. The runtime pin is the platform's own:
 // a binary built for an unpinned platform reports that on first use, not at init.
 var (
-	runtimeArchive, runtimeErr = currentRuntime()
+	runtimeArchive, runtimeErr = pin.RuntimeFor(runtime.GOOS, runtime.GOARCH)
 	runtimeDir                 = pin.RuntimeDir
 	runtimeBin                 = "llama-cli"
 
-	modelFile = artifact{url: pin.ModelURL, sha256: pin.ModelSHA256, name: pin.ModelFile}
+	modelFile = pin.Model
 )
-
-func currentRuntime() (artifact, error) {
-	r, err := pin.RuntimeFor(runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return artifact{}, err
-	}
-	return artifact{url: r.URL, sha256: r.SHA256, name: r.Archive}, nil
-}
-
-type artifact struct {
-	url, sha256, name string
-}
 
 // Runtime ensures llama-cli is in the cache and answers its path. A release build
 // carries the archive inside the binary (see runtime_embed.go) and extracts it; a
@@ -80,7 +68,7 @@ func Runtime(cache string) (string, error) {
 // pin — a build that bundled the wrong file must not run it.
 func runtimeFromBlob(cache string, blob []byte) (string, error) {
 	sum := sha256.Sum256(blob)
-	if hex.EncodeToString(sum[:]) != runtimeArchive.sha256 {
+	if hex.EncodeToString(sum[:]) != runtimeArchive.SHA256 {
 		return "", fmt.Errorf("the bundled runtime does not match the pin; rebuild")
 	}
 	return runtimeBinAfter(cache, untar(bytes.NewReader(blob), filepath.Join(cache, "runtime")))
@@ -109,36 +97,48 @@ func Model(cache string) (string, error) {
 	return ensure(cache, modelFile)
 }
 
-// ensure answers the verified artifact's path, downloading it first if needed.
-func ensure(cache string, a artifact) (string, error) {
-	final := filepath.Join(cache, a.name)
+// ensure answers the verified artifact's path in the cache, downloading it first if
+// needed. Presence is trust here: a file that made it past Fetch was verified, and
+// re-hashing a 4 GB model on every run would tax each commit for it.
+func ensure(cache string, a pin.Artifact) (string, error) {
+	final := filepath.Join(cache, a.Name)
 	if _, err := os.Stat(final); err == nil {
 		return final, nil
 	}
 	if err := os.MkdirAll(cache, 0o755); err != nil {
 		return "", err
 	}
+	return final, Fetch(a, final)
+}
 
+// Fetch makes dest hold the artifact's exact bytes: kept when it already matches the
+// pin, downloaded and verified otherwise. The build scripts reach this through
+// cmd/pin to bundle the runtime — one definition of fetch-then-verify, no shell copy.
+func Fetch(a pin.Artifact, dest string) error {
+	if sum, err := fileSHA256(dest); err == nil && sum == a.SHA256 {
+		return nil
+	}
 	// A failed download keeps its .partial: the next run resumes it with a Range
 	// request instead of starting a multi-gigabyte fetch over.
-	partial := final + ".partial"
-	if err := download(a.url, partial); err != nil {
-		return "", fmt.Errorf("%w (partial download kept; rerun to resume)", err)
+	partial := dest + ".partial"
+	if err := download(a.URL, partial); err != nil {
+		return fmt.Errorf("%w (partial download kept; rerun to resume)", err)
 	}
 	sum, err := fileSHA256(partial)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if sum != a.sha256 {
+	if sum != a.SHA256 {
 		_ = os.Remove(partial)
-		return "", fmt.Errorf("%s: checksum mismatch (got %s, pinned %s)", a.name, sum, a.sha256)
+		return fmt.Errorf("%s: checksum mismatch (got %s, pinned %s)", a.Name, sum, a.SHA256)
 	}
-	return final, os.Rename(partial, final)
+	return os.Rename(partial, dest)
 }
 
 // download fetches url into dest, resuming whatever dest already holds. A dropped
 // connection retries in-process a couple of times, each time picking up where the
 // bytes stopped; both hosts ff pins (GitHub, Hugging Face) honor Range requests.
+// An error status is not a drop — a 404 stays a 404 however often it is asked.
 func download(url, dest string) error {
 	fmt.Fprintf(os.Stderr, "ff: fetching %s\n", url)
 	client := &http.Client{Timeout: 2 * time.Hour}
@@ -148,28 +148,33 @@ func download(url, dest string) error {
 			fmt.Fprintf(os.Stderr, "ff: download interrupted (%v); resuming\n", err)
 			time.Sleep(2 * time.Second)
 		}
-		if err = fetch(client, url, dest); err == nil {
+		retryable, ferr := fetch(client, url, dest)
+		if ferr == nil {
 			return nil
+		}
+		if err = ferr; !retryable {
+			return err
 		}
 	}
 	return err
 }
 
-func fetch(client *http.Client, url, dest string) error {
+// fetch makes one attempt; its bool says whether another could go differently.
+func fetch(client *http.Client, url, dest string) (bool, error) {
 	var offset int64
 	if info, err := os.Stat(dest); err == nil {
 		offset = info.Size()
 	}
 	request, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if offset > 0 {
 		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return true, err
 	}
 	defer response.Body.Close()
 
@@ -180,7 +185,7 @@ func fetch(client *http.Client, url, dest string) error {
 		// A full body — the server ignored the Range, or there was none. Start over.
 		offset = 0
 	default:
-		return fmt.Errorf("GET %s: %s", url, response.Status)
+		return false, fmt.Errorf("GET %s: %s", url, response.Status)
 	}
 
 	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
@@ -189,7 +194,7 @@ func fetch(client *http.Client, url, dest string) error {
 	}
 	file, err := os.OpenFile(dest, flags, 0o644)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer file.Close()
 
@@ -199,9 +204,9 @@ func fetch(client *http.Client, url, dest string) error {
 	}
 	reader := progress{total: total, done: offset}.wrap(response.Body)
 	if _, err := io.Copy(file, reader); err != nil {
-		return err
+		return true, err
 	}
-	return file.Close()
+	return false, file.Close()
 }
 
 // progress prints a line per ~10%, to stderr, only for downloads big enough to wait

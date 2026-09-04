@@ -36,16 +36,14 @@ jobs:
 
       - run: go test ./...
 
-      # One binary per pinned platform. Each target's llama.cpp archive is fetched
-      # against the pins the code declares and verified before it may be embedded —
-      # same dance as the Makefile, same single definition behind both.
+      # One binary per pinned platform. The roster and each target's verified
+      # llama.cpp archive both come from internal/pin through cmd/pin — this loop
+      # holds no copy of the platform list or the fetch-then-verify dance.
       - name: build every platform
         run: |
-          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+          for target in $(go run ./cmd/pin platforms); do
             goos=${target%/*} goarch=${target#*/}
-            eval "$(go run ./cmd/pin "$goos" "$goarch")"
-            curl -fsSL "$RUNTIME_URL" -o internal/provision/runtime.tar.gz
-            echo "$RUNTIME_SHA256  internal/provision/runtime.tar.gz" | sha256sum -c -
+            go run ./cmd/pin fetch "$goos" "$goarch"
             CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
               go build -trimpath -tags embedruntime \
                 -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
@@ -65,5 +63,5 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" ff-* SHA256SUMS \
             --title "${{ github.ref_name }}" \
-            --notes "ff ${{ github.ref_name }} — darwin/arm64, darwin/amd64, linux/amd64, linux/arm64" \
+            --notes "ff ${{ github.ref_name }} — one binary per pinned platform" \
           || gh release upload "${{ github.ref_name }}" ff-* SHA256SUMS --clobber

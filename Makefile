@@ -15,25 +15,21 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOOS   ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 GOARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 
-# The bundled llama.cpp archive, fetched against the pins the code itself declares
-# (cmd/pin prints them — one definition, no drift) and verified before it may be
-# embedded. The pin differs per target, so the recipe always runs: a blob already
-# matching the target's checksum is kept, anything else is refetched.
+# The bundled llama.cpp archive, fetched and verified by `cmd/pin fetch` — the one
+# definition of the fetch-then-verify dance lives in Go, not here. The stamp keeps
+# warm builds free of container spawns; it names the target because the blob's right
+# content differs per platform, and it depends on the pins so a bump refetches.
 RUNTIME_BLOB := internal/provision/runtime.tar.gz
+BLOB_STAMP   := internal/provision/.runtime-blob-$(GOOS)-$(GOARCH)
 
-.PHONY: runtime-blob
-runtime-blob:
-	@eval "$$($(RUN) $(IMAGE) go run ./cmd/pin $(GOOS) $(GOARCH))"; \
-	echo "$$RUNTIME_SHA256  $(RUNTIME_BLOB)" | shasum -a 256 -c - >/dev/null 2>&1 || { \
-	  curl -fsSL "$$RUNTIME_URL" -o "$(RUNTIME_BLOB)"; \
-	  echo "$$RUNTIME_SHA256  $(RUNTIME_BLOB)" | shasum -a 256 -c - >/dev/null \
-	    || { rm -f "$(RUNTIME_BLOB)"; echo "runtime blob failed its checksum"; exit 1; }; \
-	}
+$(BLOB_STAMP): internal/pin/pin.go
+	$(RUN) $(IMAGE) go run ./cmd/pin fetch $(GOOS) $(GOARCH)
+	@rm -f internal/provision/.runtime-blob-* && touch $@
 
 # Cross-compiled from the linux container for whatever target was asked for (pure Go,
 # so that is a flag and not a toolchain). `embedruntime` bakes the llama.cpp archive
 # in, so the shipped ff is one file and the only thing it ever downloads is the model.
-build: runtime-blob
+build: $(BLOB_STAMP)
 	$(RUN) -e GOOS=$(GOOS) -e GOARCH=$(GOARCH) $(IMAGE) \
 	  go build -trimpath -tags embedruntime \
 	  -ldflags="-s -w -X main.version=$(VERSION)" -o bin/ff ./cmd/ff
@@ -52,4 +48,4 @@ install: build
 	esac
 
 clean:
-	rm -rf bin $(RUNTIME_BLOB)
+	rm -rf bin $(RUNTIME_BLOB) internal/provision/.runtime-blob-*

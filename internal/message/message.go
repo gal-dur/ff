@@ -65,11 +65,11 @@ func Generate(runtime, model, shaped string) (string, error) {
 	}
 	msg := Clean(raw)
 	if broken(msg) {
-		retry := prompt + "\n\nYour previous answer was:\n" + msg +
-			"\n\nIt broke the rules: it was empty, or its first line ran over 72 characters. " +
-			"Write the commit message again, following every rule."
+		retry := fmt.Sprintf("%s\n\nYour previous answer was:\n%s\n\nIt broke the rules: "+
+			"it was empty, or its first line ran over %d characters. "+
+			"Write the commit message again, following every rule.", prompt, msg, maxSubject)
 		if raw, err = complete(base, retry); err == nil {
-			if again := Clean(raw); again != "" && (msg == "" || !broken(again)) {
+			if again := Clean(raw); again != "" {
 				msg = again
 			}
 		}
@@ -80,8 +80,9 @@ func Generate(runtime, model, shaped string) (string, error) {
 	return subjectCapped(msg), nil
 }
 
+// broken by the cap's one definition: whatever subjectCapped would have to change.
 func broken(msg string) bool {
-	return msg == "" || len(strings.SplitN(msg, "\n", 2)[0]) > maxSubject
+	return msg == "" || subjectCapped(msg) != msg
 }
 
 // subjectCapped holds the first line to its promised length — cut at a word break,
@@ -104,10 +105,8 @@ func subjectCapped(msg string) string {
 // overestimates tokens for diff-heavy text, and the slack absorbs the chat template.
 // FF_CTX still pins the size exactly.
 func contextFor(prompt string) int {
-	if raw := os.Getenv("FF_CTX"); raw != "" {
-		if value, err := strconv.Atoi(raw); err == nil {
-			return value
-		}
+	if ctx := intEnv("FF_CTX", 0); ctx > 0 {
+		return ctx
 	}
 	need := len(prompt)/3 + intEnv("FF_MAX_TOKENS", 400) + 1024
 	if need > 16384 {

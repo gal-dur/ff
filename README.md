@@ -20,8 +20,6 @@ the tag is both the trigger and the version the binary reports.
 
 ```
 ff             stage, generate, commit
-ff --edit      the same, but open the editor on the generated message first
-ff --dry-run   stage, print the message, commit nothing
 ff --version   which release this is
 ```
 

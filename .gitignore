@@ -1,4 +1,6 @@
 bin/
 # Fetched by the build for the embedruntime tag, never committed — 11 MB of somebody
-# else's release does not belong in this history.
+# else's release does not belong in this history. The stamp records which platform's
+# blob is in place.
 internal/provision/runtime.tar.gz
+internal/provision/.runtime-blob-*

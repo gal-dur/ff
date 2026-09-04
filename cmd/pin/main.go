@@ -1,10 +1,12 @@
-// Command pin prints the artifact pins in shell-eval form, for the Makefile and the
-// release workflow. The pins live in internal/pin and nowhere else; this is how a
-// shell reads them without a second copy to drift.
+// Command pin is the build scripts' window into internal/pin, so the Makefile and
+// the release workflow can never disagree with the code.
 //
-// The target platform comes as arguments — `pin <goos> <goarch>` — so a build host
-// can ask about any platform it cross-compiles for; with no arguments it answers
-// for itself.
+//	pin platforms            print the pinned GOOS/GOARCH pairs, one per line
+//	pin fetch [goos goarch]  fetch and verify that platform's llama.cpp archive
+//	                         into internal/provision/runtime.tar.gz (default: this
+//	                         machine's platform), reusing provision's resumable,
+//	                         checksum-gated download — the shell holds no copy of
+//	                         the fetch-then-verify dance.
 package main
 
 import (
@@ -13,21 +15,36 @@ import (
 	"runtime"
 
 	"github.com/gal-dur/ff/internal/pin"
+	"github.com/gal-dur/ff/internal/provision"
 )
 
+const blob = "internal/provision/runtime.tar.gz"
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, "pin:", err)
+	os.Exit(1)
+}
+
 func main() {
-	goos, goarch := runtime.GOOS, runtime.GOARCH
-	if len(os.Args) == 3 {
-		goos, goarch = os.Args[1], os.Args[2]
-	} else if len(os.Args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: pin [goos goarch]")
-		os.Exit(2)
+	args := os.Args[1:]
+	switch {
+	case len(args) == 1 && args[0] == "platforms":
+		for _, platform := range pin.Platforms() {
+			fmt.Println(platform)
+		}
+	case (len(args) == 1 || len(args) == 3) && args[0] == "fetch":
+		goos, goarch := runtime.GOOS, runtime.GOARCH
+		if len(args) == 3 {
+			goos, goarch = args[1], args[2]
+		}
+		artifact, err := pin.RuntimeFor(goos, goarch)
+		if err != nil {
+			fail(err)
+		}
+		if err := provision.Fetch(artifact, blob); err != nil {
+			fail(err)
+		}
+	default:
+		fail(fmt.Errorf("usage: pin platforms | pin fetch [goos goarch]"))
 	}
-	r, err := pin.RuntimeFor(goos, goarch)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "pin:", err)
-		os.Exit(1)
-	}
-	fmt.Printf("RUNTIME_URL=%q\n", r.URL)
-	fmt.Printf("RUNTIME_SHA256=%q\n", r.SHA256)
 }
