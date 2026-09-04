@@ -1,9 +1,9 @@
 // Package provision fetches the pinned runtime and model into the cache, once.
 //
-// Every artifact is named by URL and sha256 in this file — the one place a version
-// bump or a second platform would be added (see SPEC.md's pinning table). Downloads
-// land as .partial, are verified, and only then renamed into place: a torn download
-// or a swapped upstream file cannot be used.
+// Every artifact is named by URL and sha256 in internal/pin — the one place a
+// version bump or another platform would be added. Downloads land as .partial, are
+// verified, and only then renamed into place: a torn download or a swapped upstream
+// file cannot be used.
 package provision
 
 import (
@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -26,14 +27,23 @@ import (
 
 // The pinned artifacts, named once in internal/pin. The runtime build and the model
 // move independently and each carries its own checksum. Vars rather than consts so
-// the tests can point them at a served fake.
+// the tests can point them at a served fake. The runtime pin is the platform's own:
+// a binary built for an unpinned platform reports that on first use, not at init.
 var (
-	runtimeArchive = artifact{url: pin.RuntimeURL, sha256: pin.RuntimeSHA256, name: pin.RuntimeArchive}
-	runtimeDir     = pin.RuntimeDir
-	runtimeBin     = "llama-cli"
+	runtimeArchive, runtimeErr = currentRuntime()
+	runtimeDir                 = pin.RuntimeDir
+	runtimeBin                 = "llama-cli"
 
 	modelFile = artifact{url: pin.ModelURL, sha256: pin.ModelSHA256, name: pin.ModelFile}
 )
+
+func currentRuntime() (artifact, error) {
+	r, err := pin.RuntimeFor(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return artifact{}, err
+	}
+	return artifact{url: r.URL, sha256: r.SHA256, name: r.Archive}, nil
+}
 
 type artifact struct {
 	url, sha256, name string
@@ -43,6 +53,9 @@ type artifact struct {
 // carries the archive inside the binary (see runtime_embed.go) and extracts it; a
 // build without it downloads the same pinned archive instead.
 func Runtime(cache string) (string, error) {
+	if runtimeErr != nil {
+		return "", runtimeErr
+	}
 	bin := filepath.Join(cache, "runtime", runtimeDir, runtimeBin)
 	if _, err := os.Stat(bin); err == nil {
 		return bin, nil
