@@ -11,8 +11,11 @@ const (
 	RuntimeDir     = "llama-b10797"
 	RuntimeArchive = "llama-b10797-bin-macos-arm64.tar.gz"
 
-	ModelURL = "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/" +
-		"qwen2.5-coder-3b-instruct-q4_k_m.gguf"
-	ModelSHA256 = "724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7"
-	ModelFile   = "qwen2.5-coder-3b-instruct-q4_k_m.gguf"
+	// 7B over 3B, measured on a real diff: the right commit type, accurate bullets,
+	// and it caught changes the 3B missed, at ~1.5x the run time. The next size down
+	// is the knob to turn if latency ever outweighs message quality.
+	ModelURL = "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/" +
+		"qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+	ModelSHA256 = "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c"
+	ModelFile   = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
 )
