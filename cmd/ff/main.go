@@ -8,9 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/gurunars/ff/internal/change"
-	"github.com/gurunars/ff/internal/message"
-	"github.com/gurunars/ff/internal/provision"
+	"github.com/gal-dur/ff/internal/change"
+	"github.com/gal-dur/ff/internal/message"
+	"github.com/gal-dur/ff/internal/provision"
 )
 
 // Injected at build time from `git describe` — see the Makefile and the release

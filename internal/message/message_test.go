@@ -19,6 +19,12 @@ func TestCleanStripsEveryWrapperTheModelInvents(t *testing.T) {
 		"preamble":         {"Here's the commit message:\nchore: tidy\n", "chore: tidy"},
 		"quoted":           {`"docs: explain"`, "docs: explain"},
 		"end marker":       {"perf: faster\n[end of text]", "perf: faster"},
+		"repetition loop": {
+			"feat: thing\n\n- once\n- once\n- once\n- once\n- once\n- twice\n",
+			"feat: thing\n\n- once\n- twice"},
+		"runaway body": {
+			"fix: bug\n\n- a\n- b\n- c\n- d\n- e\n- f\n",
+			"fix: bug\n\n- a\n- b\n- c\n- d"},
 	} {
 		if got := Clean(in.raw); got != in.want {
 			t.Errorf("%s: Clean(%q) = %q, want %q", name, in.raw, got, in.want)

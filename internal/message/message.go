@@ -131,7 +131,10 @@ func complete(base, prompt string) (string, error) {
 	body, err := json.Marshal(map[string]any{
 		"messages":    []map[string]string{{"role": "user", "content": prompt}},
 		"temperature": 0.2,
-		"max_tokens":  intEnv("FF_MAX_TOKENS", 400),
+		// Greedy sampling loves a loop: without this a 3B model has committed the
+		// same bullet a dozen times, riding one sentence to the token cap.
+		"repeat_penalty": 1.2,
+		"max_tokens":     intEnv("FF_MAX_TOKENS", 400),
 	})
 	if err != nil {
 		return "", err
@@ -167,6 +170,10 @@ var (
 	preamble = regexp.MustCompile(`(?i)^(here'?s?( is)?( the)?|commit message)[^\n]*:\s*\n+`)
 )
 
+// The body cap the prompt promises. Enforced here too, because a rule a small model
+// follows most days is not a rule.
+const maxBodyLines = 4
+
 // Clean is the message and nothing else, whatever the model wrapped it in.
 func Clean(raw string) string {
 	msg := strings.TrimSpace(raw)
@@ -177,5 +184,30 @@ func Clean(raw string) string {
 	}
 	msg = preamble.ReplaceAllString(msg, "")
 	msg = strings.Trim(msg, `"'`)
-	return strings.TrimSpace(msg)
+	return capped(strings.TrimSpace(msg))
+}
+
+// capped drops repeated body lines and holds the body to its promised length — the
+// mechanical backstop for a sampler that once committed one bullet a dozen times.
+func capped(msg string) string {
+	lines := strings.Split(msg, "\n")
+	kept := []string{lines[0]}
+	seen := map[string]bool{}
+	body := 0
+	for _, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if last := kept[len(kept)-1]; last != "" {
+				kept = append(kept, "")
+			}
+			continue
+		}
+		if seen[trimmed] || body >= maxBodyLines {
+			continue
+		}
+		seen[trimmed] = true
+		body++
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }

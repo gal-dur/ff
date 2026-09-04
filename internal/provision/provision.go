@@ -8,6 +8,7 @@ package provision
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,47 +20,64 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gal-dur/ff/internal/pin"
 )
 
-// The pinned artifacts. The runtime build and the model move independently and each
-// carries its own checksum.
+// The pinned artifacts, named once in internal/pin. The runtime build and the model
+// move independently and each carries its own checksum. Vars rather than consts so
+// the tests can point them at a served fake.
 var (
-	runtimeArchive = artifact{
-		url: "https://github.com/ggml-org/llama.cpp/releases/download/b10797/" +
-			"llama-b10797-bin-macos-arm64.tar.gz",
-		sha256: "474a788ec73d17a066360b1c50c9733c78a47d062616e91963c65a344548e889",
-		name:   "llama-b10797-bin-macos-arm64.tar.gz",
-	}
-	// The archive's top-level directory, and the binary inside it.
-	runtimeDir = "llama-b10797"
-	runtimeBin = "llama-cli"
+	runtimeArchive = artifact{url: pin.RuntimeURL, sha256: pin.RuntimeSHA256, name: pin.RuntimeArchive}
+	runtimeDir     = pin.RuntimeDir
+	runtimeBin     = "llama-cli"
 
-	modelFile = artifact{
-		url: "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/" +
-			"qwen2.5-coder-3b-instruct-q4_k_m.gguf",
-		sha256: "724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7",
-		name:   "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
-	}
+	modelFile = artifact{url: pin.ModelURL, sha256: pin.ModelSHA256, name: pin.ModelFile}
 )
 
 type artifact struct {
 	url, sha256, name string
 }
 
-// Runtime ensures llama-cli is in the cache and answers its path.
+// Runtime ensures llama-cli is in the cache and answers its path. A release build
+// carries the archive inside the binary (see runtime_embed.go) and extracts it; a
+// build without it downloads the same pinned archive instead.
 func Runtime(cache string) (string, error) {
 	bin := filepath.Join(cache, "runtime", runtimeDir, runtimeBin)
 	if _, err := os.Stat(bin); err == nil {
 		return bin, nil
 	}
+	if len(embeddedRuntime) > 0 {
+		return runtimeFromBlob(cache, embeddedRuntime)
+	}
 	archive, err := ensure(cache, runtimeArchive)
 	if err != nil {
 		return "", err
 	}
-	// Extracted beside its dylibs — the binary loads them by relative rpath.
-	if err := untar(archive, filepath.Join(cache, "runtime")); err != nil {
+	file, err := os.Open(archive)
+	if err != nil {
 		return "", err
 	}
+	defer file.Close()
+	// Extracted beside its dylibs — the binary loads them by relative rpath.
+	return runtimeBinAfter(cache, untar(file, filepath.Join(cache, "runtime")))
+}
+
+// runtimeFromBlob extracts the bundled archive, refusing bytes that do not match the
+// pin — a build that bundled the wrong file must not run it.
+func runtimeFromBlob(cache string, blob []byte) (string, error) {
+	sum := sha256.Sum256(blob)
+	if hex.EncodeToString(sum[:]) != runtimeArchive.sha256 {
+		return "", fmt.Errorf("the bundled runtime does not match the pin; rebuild")
+	}
+	return runtimeBinAfter(cache, untar(bytes.NewReader(blob), filepath.Join(cache, "runtime")))
+}
+
+func runtimeBinAfter(cache string, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	bin := filepath.Join(cache, "runtime", runtimeDir, runtimeBin)
 	if _, err := os.Stat(bin); err != nil {
 		return "", fmt.Errorf("archive did not contain %s/%s", runtimeDir, runtimeBin)
 	}
@@ -166,15 +184,10 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-// untar extracts a .tar.gz, preserving the exec bit and refusing entries that would
-// escape the destination.
-func untar(archive, dest string) error {
-	file, err := os.Open(archive)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	unzipped, err := gzip.NewReader(file)
+// untar extracts a .tar.gz stream, preserving the exec bit and refusing entries that
+// would escape the destination.
+func untar(archive io.Reader, dest string) error {
+	unzipped, err := gzip.NewReader(archive)
 	if err != nil {
 		return err
 	}

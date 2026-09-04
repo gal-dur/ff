@@ -49,8 +49,9 @@ func fakeArchive(t *testing.T) []byte {
 	return buffer.Bytes()
 }
 
-// pin swaps the package's pinned artifact for a served fake, restoring it after.
-func pin(t *testing.T, content []byte) *int {
+// servePinned swaps the package's pinned artifact for a served fake, restoring it
+// after. (Not called pin: that name is the pins' own package.)
+func servePinned(t *testing.T, content []byte) *int {
 	t.Helper()
 	hits := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -68,7 +69,7 @@ func pin(t *testing.T, content []byte) *int {
 
 func TestRuntimeDownloadsVerifiesExtractsOnce(t *testing.T) {
 	content := fakeArchive(t)
-	hits := pin(t, content)
+	hits := servePinned(t, content)
 	cache := t.TempDir()
 
 	bin, err := Runtime(cache)
@@ -97,7 +98,7 @@ func TestRuntimeDownloadsVerifiesExtractsOnce(t *testing.T) {
 
 func TestACorruptDownloadIsRefusedWholesale(t *testing.T) {
 	content := fakeArchive(t)
-	pin(t, content)
+	servePinned(t, content)
 	// Pin a hash the served bytes cannot match.
 	runtimeArchive.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -124,13 +125,33 @@ func TestAnEscapingArchiveEntryIsRefused(t *testing.T) {
 	_ = archive.Close()
 	_ = zipped.Close()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "evil.tar.gz")
-	if err := os.WriteFile(path, buffer.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := untar(path, filepath.Join(dir, "out")); err == nil {
+	if err := untar(&buffer, filepath.Join(t.TempDir(), "out")); err == nil {
 		t.Fatal("an entry escaping the destination was extracted")
+	}
+}
+
+// The bundled-runtime path: the blob extracts when it matches the pin and is refused
+// wholesale when it does not — a build that bundled the wrong bytes must not run them.
+func TestABundledRuntimeIsVerifiedBeforeExtraction(t *testing.T) {
+	blob := fakeArchive(t)
+	sum := sha256.Sum256(blob)
+
+	saved := runtimeArchive
+	runtimeArchive.sha256 = hex.EncodeToString(sum[:])
+	t.Cleanup(func() { runtimeArchive = saved })
+
+	cache := t.TempDir()
+	bin, err := runtimeFromBlob(cache, blob)
+	if err != nil {
+		t.Fatalf("runtimeFromBlob: %v", err)
+	}
+	if info, err := os.Stat(bin); err != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("extracted binary bad: %v", err)
+	}
+
+	runtimeArchive.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+	if _, err := runtimeFromBlob(t.TempDir(), blob); err == nil {
+		t.Fatal("a mismatched bundled runtime was extracted")
 	}
 }
 
