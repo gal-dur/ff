@@ -23,16 +23,18 @@ func fail(err error) {
 }
 
 func main() {
-	dryRun := false
+	dryRun, edit := false, false
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--dry-run":
 			dryRun = true
+		case "--edit":
+			edit = true
 		case "--version":
 			fmt.Println("ff", version)
 			return
 		default:
-			fail(fmt.Errorf("unknown argument %q (usage: ff [--dry-run|--version])", arg))
+			fail(fmt.Errorf("unknown argument %q (usage: ff [--dry-run|--edit|--version])", arg))
 		}
 	}
 
@@ -76,8 +78,14 @@ func main() {
 	if dryRun {
 		return
 	}
-	commit := exec.Command("git", "commit", "--no-verify", "-m", msg)
-	commit.Stdout, commit.Stderr = os.Stdout, os.Stderr
+	// A plain git commit: hooks run, as they would for a hand-written message.
+	// --edit opens the editor seeded with the generated message.
+	args := []string{"commit", "-m", msg}
+	if edit {
+		args = append(args, "--edit")
+	}
+	commit := exec.Command("git", args...)
+	commit.Stdin, commit.Stdout, commit.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := commit.Run(); err != nil {
 		fail(fmt.Errorf("git commit failed"))
 	}

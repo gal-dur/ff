@@ -52,13 +52,18 @@ jobs:
                 -o "ff-$goos-$goarch" ./cmd/ff
           done
 
+      # The binaries get the same treatment as every artifact ff itself pins:
+      # a published checksum, verified by install.sh before anything runs.
+      - name: checksums
+        run: sha256sum ff-* > SHA256SUMS
+
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
         # A re-run of the same tag finds its release already there; replacing the
         # assets beats failing the whole workflow over idempotence.
         run: |
-          gh release create "${{ github.ref_name }}" ff-* \
+          gh release create "${{ github.ref_name }}" ff-* SHA256SUMS \
             --title "${{ github.ref_name }}" \
             --notes "ff ${{ github.ref_name }} — darwin/arm64, darwin/amd64, linux/amd64, linux/arm64" \
-          || gh release upload "${{ github.ref_name }}" ff-* --clobber
+          || gh release upload "${{ github.ref_name }}" ff-* SHA256SUMS --clobber

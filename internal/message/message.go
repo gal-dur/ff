@@ -43,29 +43,83 @@ func intEnv(name string, fallback int) int {
 	return fallback
 }
 
+// The subject cap the prompt promises (rule 2), enforced mechanically below.
+const maxSubject = 72
+
 // Generate answers the cleaned commit message for a shaped change.
+//
+// A broken first answer (empty, or a subject over the cap) is re-asked once while
+// the server is still warm: the expensive part of a run is the model load, and a
+// retry against the live server costs one completion, not another launch.
 func Generate(runtime, model, shaped string) (string, error) {
-	base, stop, err := startServer(runtime, model)
+	prompt := shaped + "\n\n" + rules
+	base, stop, err := startServer(runtime, model, contextFor(prompt))
 	if err != nil {
 		return "", err
 	}
 	defer stop()
 
-	raw, err := complete(base, shaped+"\n\n"+rules)
+	raw, err := complete(base, prompt)
 	if err != nil {
 		return "", err
 	}
 	msg := Clean(raw)
+	if broken(msg) {
+		retry := prompt + "\n\nYour previous answer was:\n" + msg +
+			"\n\nIt broke the rules: it was empty, or its first line ran over 72 characters. " +
+			"Write the commit message again, following every rule."
+		if raw, err = complete(base, retry); err == nil {
+			if again := Clean(raw); again != "" && (msg == "" || !broken(again)) {
+				msg = again
+			}
+		}
+	}
 	if msg == "" {
 		return "", fmt.Errorf("empty response from the model")
 	}
-	return msg, nil
+	return subjectCapped(msg), nil
+}
+
+func broken(msg string) bool {
+	return msg == "" || len(strings.SplitN(msg, "\n", 2)[0]) > maxSubject
+}
+
+// subjectCapped holds the first line to its promised length — cut at a word break,
+// because a rule a model follows most days is not a rule.
+func subjectCapped(msg string) string {
+	lines := strings.SplitN(msg, "\n", 2)
+	if len(lines[0]) <= maxSubject {
+		return msg
+	}
+	subject := lines[0][:maxSubject]
+	if cut := strings.LastIndex(subject, " "); cut > 0 {
+		subject = subject[:cut]
+	}
+	lines[0] = subject
+	return strings.Join(lines, "\n")
+}
+
+// contextFor sizes the KV cache to the actual prompt instead of a fixed maximum —
+// the allocation is paid at every server start, in time and memory. Chars over 3
+// overestimates tokens for diff-heavy text, and the slack absorbs the chat template.
+// FF_CTX still pins the size exactly.
+func contextFor(prompt string) int {
+	if raw := os.Getenv("FF_CTX"); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil {
+			return value
+		}
+	}
+	need := len(prompt)/3 + intEnv("FF_MAX_TOKENS", 400) + 1024
+	if need > 16384 {
+		return 16384
+	}
+	return (need + 1023) / 1024 * 1024
 }
 
 // startServer spawns llama-server on a free loopback port and waits until it is
 // ready. Loopback is hard-coded, not configured: nothing this tool does is ever
 // served to a network.
-func startServer(runtime, model string) (string, func(), error) {
+func startServer(runtime, model string, ctx int) (string, func(), error) {
 	server := strings.TrimSuffix(runtime, "llama-cli") + "llama-server"
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -80,9 +134,11 @@ func startServer(runtime, model string) (string, func(), error) {
 		"-m", model,
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(port),
-		"-c", strconv.Itoa(intEnv("FF_CTX", 16384)),
+		"-c", strconv.Itoa(ctx),
 		"-ngl", "99",
 		"--no-webui",
+		// The warmup decode primes nothing a one-request run benefits from.
+		"--no-warmup",
 	)
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
@@ -131,9 +187,11 @@ func complete(base, prompt string) (string, error) {
 	body, err := json.Marshal(map[string]any{
 		"messages":    []map[string]string{{"role": "user", "content": prompt}},
 		"temperature": 0.2,
-		// Greedy sampling loves a loop: without this a 3B model has committed the
-		// same bullet a dozen times, riding one sentence to the token cap.
-		"repeat_penalty": 1.2,
+		// Explicitly off. The 3B under greedy sampling once committed the same
+		// bullet a dozen times and earned a 1.2 penalty; A/B on the 7B (real diffs,
+		// penalties 1.0/1.1/1.2) showed no looping and the most accurate type and
+		// bullets at 1.0. capped() still backstops repetition mechanically.
+		"repeat_penalty": 1.0,
 		"max_tokens":     intEnv("FF_MAX_TOKENS", 400),
 	})
 	if err != nil {

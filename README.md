@@ -20,9 +20,12 @@ the tag is both the trigger and the version the binary reports.
 
 ```
 ff             stage, generate, commit
+ff --edit      the same, but open the editor on the generated message first
 ff --dry-run   stage, print the message, commit nothing
 ff --version   which release this is
 ```
+
+Commit hooks run as they would for a hand-written message; ff does not bypass them.
 
 First run extracts the bundled runtime and fetches the pinned model into the cache,
 checksum-verified; every later run is offline. On Linux the runtime needs `libgomp`

@@ -155,6 +155,38 @@ func TestABundledRuntimeIsVerifiedBeforeExtraction(t *testing.T) {
 	}
 }
 
+// A download picks up where its .partial stopped: the server sees a Range request
+// and only the missing tail travels.
+func TestADownloadResumesFromItsPartial(t *testing.T) {
+	content := []byte("0123456789abcdefghij")
+	var gotRange string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRange = r.Header.Get("Range")
+		if gotRange == "bytes=10-" {
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(content[10:])
+			return
+		}
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(server.Close)
+
+	dest := filepath.Join(t.TempDir(), "artifact.partial")
+	if err := os.WriteFile(dest, content[:10], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := download(server.URL, dest); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	if gotRange != "bytes=10-" {
+		t.Fatalf("Range = %q, want the partial's size", gotRange)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("resumed file = %q, want the whole content", got)
+	}
+}
+
 func TestFFModelFileShortCircuitsProvisioning(t *testing.T) {
 	own := filepath.Join(t.TempDir(), "own.gguf")
 	if err := os.WriteFile(own, []byte("gguf"), 0o644); err != nil {

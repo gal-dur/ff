@@ -41,9 +41,10 @@ func git(args ...string) (string, error) {
 	return string(out), nil
 }
 
-// Stage stages everything, exactly as the tool always has.
+// Stage stages the whole repository. -A, not `.`: everything means everything,
+// whichever subdirectory ff was run from.
 func Stage() error {
-	_, err := git("add", ".")
+	_, err := git("add", "-A")
 	return err
 }
 

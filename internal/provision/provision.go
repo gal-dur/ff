@@ -119,10 +119,11 @@ func ensure(cache string, a artifact) (string, error) {
 		return "", err
 	}
 
+	// A failed download keeps its .partial: the next run resumes it with a Range
+	// request instead of starting a multi-gigabyte fetch over.
 	partial := final + ".partial"
 	if err := download(a.url, partial); err != nil {
-		_ = os.Remove(partial)
-		return "", err
+		return "", fmt.Errorf("%w (partial download kept; rerun to resume)", err)
 	}
 	sum, err := fileSHA256(partial)
 	if err != nil {
@@ -135,37 +136,86 @@ func ensure(cache string, a artifact) (string, error) {
 	return final, os.Rename(partial, final)
 }
 
+// download fetches url into dest, resuming whatever dest already holds. A dropped
+// connection retries in-process a couple of times, each time picking up where the
+// bytes stopped; both hosts ff pins (GitHub, Hugging Face) honor Range requests.
 func download(url, dest string) error {
 	fmt.Fprintf(os.Stderr, "ff: fetching %s\n", url)
 	client := &http.Client{Timeout: 2 * time.Hour}
-	response, err := client.Get(url)
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			fmt.Fprintf(os.Stderr, "ff: download interrupted (%v); resuming\n", err)
+			time.Sleep(2 * time.Second)
+		}
+		if err = fetch(client, url, dest); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+func fetch(client *http.Client, url, dest string) error {
+	var offset int64
+	if info, err := os.Stat(dest); err == nil {
+		offset = info.Size()
+	}
+	request, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	if offset > 0 {
+		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+
+	switch {
+	case offset > 0 && response.StatusCode == http.StatusPartialContent:
+		// The server honors the resume; append to what is there.
+	case response.StatusCode == http.StatusOK:
+		// A full body — the server ignored the Range, or there was none. Start over.
+		offset = 0
+	default:
 		return fmt.Errorf("GET %s: %s", url, response.Status)
 	}
-	file, err := os.Create(dest)
+
+	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	if offset > 0 {
+		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	}
+	file, err := os.OpenFile(dest, flags, 0o644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	if _, err := io.Copy(file, progress{total: response.ContentLength}.wrap(response.Body)); err != nil {
+
+	total := response.ContentLength
+	if total > 0 {
+		total += offset
+	}
+	reader := progress{total: total, done: offset}.wrap(response.Body)
+	if _, err := io.Copy(file, reader); err != nil {
 		return err
 	}
 	return file.Close()
 }
 
 // progress prints a line per ~10%, to stderr, only for downloads big enough to wait
-// on. A 2 GB fetch with no output reads as a hang.
-type progress struct{ total int64 }
+// on. A 2 GB fetch with no output reads as a hang. done carries a resumed fetch's
+// starting offset, so the percentages stay honest across interruptions.
+type progress struct{ total, done int64 }
 
 func (p progress) wrap(r io.Reader) io.Reader {
 	if p.total < 50<<20 {
 		return r
 	}
-	return &progressReader{inner: r, total: p.total, step: p.total / 10}
+	step := p.total / 10
+	next := (p.done/step + 1) * step
+	return &progressReader{inner: r, total: p.total, done: p.done, step: step, next: next}
 }
 
 type progressReader struct {
