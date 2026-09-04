@@ -1,0 +1,44 @@
+# Every push to master publishes a release named by `git describe` and carrying the
+# darwin/arm64 binary — which is what install.sh's `releases/latest/download/ff`
+# resolves to. Tag once (e.g. v0.1.0) and describe reads v0.1.0-3-gabc1234 from then
+# on; before any tag exists it falls back to the bare commit hash.
+name: release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history: `git describe` counts commits since the last tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - run: go test ./...
+
+      - name: build
+        run: |
+          VERSION="$(git describe --tags --always)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o ff ./cmd/ff
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A re-run of the same commit finds its release already there; replacing the
+        # asset beats failing the whole workflow over idempotence.
+        run: |
+          gh release create "$VERSION" ff --title "$VERSION" \
+            --notes "ff $VERSION — darwin/arm64" \
+          || gh release upload "$VERSION" ff --clobber

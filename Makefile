@@ -5,11 +5,16 @@ RUN   := podman run --rm -v $(PWD):/src -v ff-go:/go -w /src -e CGO_ENABLED=0
 
 .PHONY: build test install clean
 
+# The version is git's own description, computed on the host (the container's git
+# would balk at the mounted repo's ownership) and injected the same way the release
+# workflow injects it.
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 # The binary is darwin/arm64 — a personal tool for this machine, cross-compiled from
 # the linux container (pure Go, so that is a flag and not a toolchain).
 build:
 	$(RUN) -e GOOS=darwin -e GOARCH=arm64 $(IMAGE) \
-	  go build -trimpath -ldflags="-s -w" -o bin/ff ./cmd/ff
+	  go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/ff ./cmd/ff
 
 test:
 	$(RUN) $(IMAGE) go test ./...

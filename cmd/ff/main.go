@@ -13,6 +13,10 @@ import (
 	"github.com/gurunars/ff/internal/provision"
 )
 
+// Injected at build time from `git describe` — see the Makefile and the release
+// workflow, which must agree on the flag.
+var version = "dev"
+
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, "ff:", err)
 	os.Exit(1)
@@ -24,8 +28,11 @@ func main() {
 		switch arg {
 		case "--dry-run":
 			dryRun = true
+		case "--version":
+			fmt.Println("ff", version)
+			return
 		default:
-			fail(fmt.Errorf("unknown argument %q (usage: ff [--dry-run])", arg))
+			fail(fmt.Errorf("unknown argument %q (usage: ff [--dry-run|--version])", arg))
 		}
 	}
 
