@@ -21,8 +21,11 @@ _scripts = here / "toolchain" / "wyrd"
 # linux/amd64 (the Makefile defaults to `uname`'s).
 _goos = param("GOOS", "linux")
 _goarch = param("GOARCH", "amd64")
-# The version the binary reports. The Makefile asks `git describe`; wyrd has no git source.
-_version = param("VERSION", "dev")
+# The version the binary reports: `--VERSION`, else what `git describe` says of the repository,
+# as the Makefile asks it (execution §10 suggests `git.describe(repo = files(".git/**"))`, but
+# there is no wyrd://git, so `_describe` is that tool). Without the work tree it cannot say
+# `--dirty`.
+_version = param<String>("VERSION") ?? _describe(script = _scripts.file("describe.sh"), repo = files(".git/**")).version
 
 # --- the tools ----------------------------------------------------------------------------------
 # One image for all, Go's own build cache carried between runs by wyrd (one per kind of run, so
@@ -81,6 +84,14 @@ _build_run = tool({
   "vars": { "GOCACHE": "/cache/go", "GOTOOLCHAIN": "local", "CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly" },
   "caches": { "go-build": "/cache/go" },
   "outputs": { "binary": file("bin/ff"), "bin": dir("bin") },
+  "entry": ["sh", "/in/script"],
+})
+
+_describe = tool({
+  "doc": "git describe --tags --always of the repository",
+  "image": "docker.io/library/golang:1.27",
+  "inputs": { "script": File, "repo": Files },
+  "outputs": { "version": json<String>("version.json") },
   "entry": ["sh", "/in/script"],
 })
 
