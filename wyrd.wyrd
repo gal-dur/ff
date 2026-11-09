@@ -63,7 +63,9 @@ _fmt_run = tool({
 _fetch_run = tool({
   "doc": "The pinned llama.cpp archive for one platform, fetched and verified by cmd/pin",
   "image": "docker.io/library/golang:1.27",
-  "inputs": { "script": File, "src": Files, "goos": env<String>("GOOS"), "goarch": env<String>("GOARCH") },
+  # The platform arrives under names of its own: as GOOS/GOARCH it would make `go run` build cmd/pin
+  # for the target, which cannot run here.
+  "inputs": { "script": File, "src": Files, "goos": env<String>("PIN_GOOS"), "goarch": env<String>("PIN_GOARCH") },
   "vars": { "GOCACHE": "/tmp/go", "GOTOOLCHAIN": "local", "CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly" },
   "outputs": { "runtime": file("runtime.tar.gz") },
   "entry": ["sh", "/in/script"],
