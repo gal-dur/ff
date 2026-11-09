@@ -15,6 +15,9 @@
 # edit to the README or the Makefile is a cache hit everywhere.
 _src = files("go.mod **/*.go")
 
+# The tools' scripts, passed to every run as a `File` rather than built into an image with
+# std.buildImage: a built image's digest changes with any script, and with it every toolchain
+# cache is lost and every check needs --allow-net (wyrd tasks 387, 388).
 _scripts = here / "toolchain" / "wyrd"
 
 # The target platform. wyrd has no host to ask, so the default is the one ff's CI builds most:
