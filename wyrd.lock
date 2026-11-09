@@ -1,0 +1,9 @@
+# wyrd.lock: written by `wyrd lock` (execution §8). Commit it; do not edit it.
+wyrd = "4.0.0-dev"
+
+[images]
+"docker.io/library/golang:1.27" = { digest = "sha256:a5406f41680f17b4aa0b49de641e00f116215f5c8829d548d29cb44c4f85aa4f", arch = "amd64" }
+
+[native]
+
+[toolkits]

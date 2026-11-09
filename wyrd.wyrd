@@ -1,0 +1,118 @@
+# ff, built and checked by wyrd v4 (wyrd task 375, feedback loop iteration 3). The Makefile's
+# `build` and `test`, plus `go vet` and `gofmt` as checks. There is no wyrd://go toolkit yet, so
+# each tool is declared here over the Makefile's image, docker.io/library/golang, and runs a
+# script of toolchain/wyrd/ that writes std's report types.
+#
+#     wyrd run test                     # go test ./..., coverage folded into one report
+#     wyrd run test --RUN TestBuild     # only the tests matching the regexp
+#     wyrd run vet fmt                  # the two lint checks
+#     wyrd run fmt                      # gofmt, as a draft; `wyrd keep DRAFT` writes it
+#     wyrd run build --allow-net        # bin/ff with the llama.cpp runtime embedded
+#     wyrd run build --GOOS darwin --GOARCH arm64
+#     wyrd run checks                   # every check, one verdict
+
+# The Go sources the module compiles, and the module file. Nothing else reaches a run, so an
+# edit to the README or the Makefile is a cache hit everywhere.
+_src = files("go.mod **/*.go")
+
+_scripts = here / "toolchain" / "wyrd"
+
+# The target platform. wyrd has no host to ask, so the default is the one ff's CI builds most:
+# linux/amd64 (the Makefile defaults to `uname`'s).
+_goos = param("GOOS", "linux")
+_goarch = param("GOARCH", "amd64")
+# The version the binary reports. The Makefile asks `git describe`; wyrd has no git source.
+_version = param("VERSION", "dev")
+
+# --- the tools ----------------------------------------------------------------------------------
+# One image for all, Go's own build cache carried between runs by wyrd (one per kind of run, so
+# test, vet and build do not wait on each other), and no toolchain switching: go.mod's `go 1.25`
+# is older than the image's Go, which therefore never downloads another.
+
+_test_run = tool({
+  "doc": "go test ./... under coverage, as one std.TestReport",
+  "image": "docker.io/library/golang:1.27",
+  "inputs": { "script": File, "src": Files, "run": env<Optional<String>>("RUN") },
+  "vars": { "GOCACHE": "/cache/go", "GOTOOLCHAIN": "local", "CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly" },
+  "caches": { "go-test": "/cache/go" },
+  "outputs": { "report": json<std.TestReport>("report.json"), "log": file("test.log") },
+  "entry": ["sh", "/in/script"],
+})
+
+_vet_run = tool({
+  "doc": "go vet ./..., as one std.LintReport",
+  "image": "docker.io/library/golang:1.27",
+  "inputs": { "script": File, "src": Files },
+  "vars": { "GOCACHE": "/cache/go", "GOTOOLCHAIN": "local", "CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly" },
+  "caches": { "go-vet": "/cache/go" },
+  "outputs": { "report": json<std.LintReport>("report.json"), "log": file("vet.log") },
+  "entry": ["sh", "/in/script"],
+})
+
+_fmt_run = tool({
+  "doc": "gofmt -w over a private copy; the changes as a patch",
+  "image": "docker.io/library/golang:1.27",
+  "inputs": { "script": File, "src": edit<Files> },
+  "outputs": { "report": json<std.LintReport>("report.json"), "changes": changes("src") },
+  "entry": ["sh", "/in/script"],
+})
+
+_fetch_run = tool({
+  "doc": "The pinned llama.cpp archive for one platform, fetched and verified by cmd/pin",
+  "image": "docker.io/library/golang:1.27",
+  "inputs": { "script": File, "src": Files, "goos": env<String>("GOOS"), "goarch": env<String>("GOARCH") },
+  "vars": { "GOCACHE": "/tmp/go", "GOTOOLCHAIN": "local", "CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly" },
+  "outputs": { "runtime": file("runtime.tar.gz") },
+  "entry": ["sh", "/in/script"],
+  "net": true,
+})
+
+_build_run = tool({
+  "doc": "bin/ff, built with the embedruntime tag around the fetched archive",
+  "image": "docker.io/library/golang:1.27",
+  "inputs": {
+    "script": File,
+    "src": Files,
+    "runtime": File,
+    "goos": env<String>("GOOS"),
+    "goarch": env<String>("GOARCH"),
+    "version": env<String>("VERSION"),
+  },
+  "vars": { "GOCACHE": "/cache/go", "GOTOOLCHAIN": "local", "CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly" },
+  "caches": { "go-build": "/cache/go" },
+  "outputs": { "binary": file("bin/ff"), "bin": dir("bin") },
+  "entry": ["sh", "/in/script"],
+})
+
+# --- test ---------------------------------------------------------------------------------------
+
+tests = _test_run(script = _scripts.file("test.sh"), src = _src, run = param<String>("RUN"))
+test = assert(tests.report.ok, tests.report.message ?? "tests failed")
+
+# --- vet, fmt -----------------------------------------------------------------------------------
+
+vetted = _vet_run(script = _scripts.file("vet.sh"), src = _src)
+vet = assert(vetted.report.ok, vetted.report.message ?? "go vet is red")
+
+# gofmt edits a private copy; its patch makes a draft, which `wyrd keep` writes.
+fmt = _fmt_run(script = _scripts.file("fmt.sh"), src = files("**/*.go"))
+
+# --- build --------------------------------------------------------------------------------------
+
+# The one network step: cmd/pin reads the pins from internal/pin and verifies the download
+# against them, so it is given the module's sources and keyed by them; a pin bump refetches.
+runtime = _fetch_run(script = _scripts.file("fetch.sh"), src = _src, goos = _goos, goarch = _goarch).runtime
+
+build = _build_run(
+  script = _scripts.file("build.sh"),
+  src = _src,
+  runtime = runtime,
+  goos = _goos,
+  goarch = _goarch,
+  version = _version,
+)
+
+# --- everything ---------------------------------------------------------------------------------
+
+_checks_report = verdict([tests.report, vetted.report, fmt.report])
+checks = assert(_checks_report.ok, _checks_report.message ?? "ff's checks are red")

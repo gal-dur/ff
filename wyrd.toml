@@ -1,0 +1,2 @@
+wyrd = "4.0.0-dev"
+exclude = ["bin"]
