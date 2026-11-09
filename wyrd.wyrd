@@ -14,6 +14,10 @@
 # The Go sources the module compiles, and the module file. Nothing else reaches a run, so an
 # edit to the README or the Makefile is a cache hit everywhere.
 _src = files("go.mod **/*.go")
+# What the binary is built from, tests left out: a new test neither rebuilds nor refetches.
+_build_src = files("go.mod **/*.go !**/*_test.go")
+# What `cmd/pin fetch` compiles: the network step is keyed by these alone.
+_pin_src = files("go.mod cmd/pin/*.go internal/pin/*.go internal/provision/*.go !**/*_test.go")
 
 # The tools' scripts, passed to every run as a `File` rather than built into an image with
 # std.buildImage: a built image's digest changes with any script, and with it every toolchain
@@ -117,11 +121,11 @@ fmt = _fmt_run(script = _scripts.file("fmt.sh"), src = files("**/*.go"))
 
 # The one network step: cmd/pin reads the pins from internal/pin and verifies the download
 # against them, so it is given the module's sources and keyed by them; a pin bump refetches.
-runtime = _fetch_run(script = _scripts.file("fetch.sh"), src = _src, goos = _goos, goarch = _goarch).runtime
+runtime = _fetch_run(script = _scripts.file("fetch.sh"), src = _pin_src, goos = _goos, goarch = _goarch).runtime
 
 build = _build_run(
   script = _scripts.file("build.sh"),
-  src = _src,
+  src = _build_src,
   runtime = runtime,
   goos = _goos,
   goarch = _goarch,
