@@ -5,7 +5,7 @@ wyrd = "4.0.0-dev"
 "docker.io/library/golang:1.27" = { digest = "sha256:a5406f41680f17b4aa0b49de641e00f116215f5c8829d548d29cb44c4f85aa4f", arch = "amd64" }
 "mirror.gcr.io/library/golang:1.27.3-trixie" = { digest = "sha256:a5406f41680f17b4aa0b49de641e00f116215f5c8829d548d29cb44c4f85aa4f", arch = "amd64" }
 "mirror.gcr.io/library/rust:1.99.1-slim-trixie" = { digest = "sha256:e97df055c54a05160e7c67ba3b2963de6ddb95903911baf8922dbcd1b394f698", arch = "amd64" }
-"std/go" = { digest = "sha256:eff3cd9e632b42acf82f6fe70061f438452636cd492bc25a1282cacb9dc4cde1", arch = "amd64" }
+"std/go" = { digest = "sha256:1e83f35556f854a3c88e5fc015df799cc6f97d673114bf9d7c5cc5e93b2530a9", arch = "amd64" }
 
 [native]
 
