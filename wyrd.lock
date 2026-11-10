@@ -2,9 +2,10 @@
 wyrd = "4.0.0-dev"
 
 [images]
-"docker.io/library/golang:1.27" = { digest = "sha256:a5406f41680f17b4aa0b49de641e00f116215f5c8829d548d29cb44c4f85aa4f", arch = "amd64" }
+"mirror.gcr.io/library/debian:trixie-20261104-slim" = { digest = "sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392", arch = "amd64" }
 "mirror.gcr.io/library/golang:1.27.3-trixie" = { digest = "sha256:a5406f41680f17b4aa0b49de641e00f116215f5c8829d548d29cb44c4f85aa4f", arch = "amd64" }
 "mirror.gcr.io/library/rust:1.99.1-slim-trixie" = { digest = "sha256:e97df055c54a05160e7c67ba3b2963de6ddb95903911baf8922dbcd1b394f698", arch = "amd64" }
+"std/git" = { digest = "sha256:2c0b026943c490936dcee03725482c6e188c312adb666ea074dbde589171e2d7", arch = "amd64" }
 "std/go" = { digest = "sha256:1e83f35556f854a3c88e5fc015df799cc6f97d673114bf9d7c5cc5e93b2530a9", arch = "amd64" }
 
 [native]

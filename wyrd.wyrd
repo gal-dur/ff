@@ -11,23 +11,14 @@
 #     wyrd run checks                   # every check, one verdict
 
 go = import("wyrd://go")
-
-# describe.sh is the one script left: there is no wyrd://git (wyrd task 390).
-_scripts = here / "toolchain" / "wyrd"
+git = import("wyrd://git")
 
 # The target platform, linux/amd64 unless given (the Makefile defaults to `uname`'s).
 _goos = param("GOOS", "linux")
 _goarch = param("GOARCH", "amd64")
-# The version the binary reports: `--VERSION`, else what `git describe` says of the repository.
-_version = param<String>("VERSION") ?? _describe(script = _scripts.file("describe.sh"), repo = files(".git/**")).version
-
-_describe = tool({
-  "doc": "git describe --tags --always of the repository",
-  "image": "docker.io/library/golang:1.27",
-  "inputs": { "script": File, "repo": Files },
-  "outputs": { "version": json<String>("version.json") },
-  "entry": ["sh", "/in/script"],
-})
+# The version the binary reports: `--VERSION`, else `git describe --tags --always` of HEAD
+# (no `-dirty` suffix: wyrd task 474).
+_version = param<String>("VERSION") ?? git.describe(repo = here)
 
 # --- checks: one run per package, each keyed by its files and those of the packages it builds --
 
